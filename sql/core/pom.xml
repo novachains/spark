@@ -118,6 +118,11 @@
       <artifactId>xbean-asm7-shaded</artifactId>
     </dependency>
     <dependency>
+      <groupId>org.casbin</groupId>
+      <artifactId>jcasbin</artifactId>
+      <version>1.6.3</version>
+    </dependency>
+    <dependency>
       <groupId>org.scalacheck</groupId>
       <artifactId>scalacheck_${scala.binary.version}</artifactId>
       <scope>test</scope>

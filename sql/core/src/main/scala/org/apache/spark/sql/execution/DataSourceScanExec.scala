@@ -396,6 +396,8 @@ case class FileSourceScanExec(
   }
 
   lazy val inputRDD: RDD[InternalRow] = {
+    val loc = relation.location.rootPaths.head
+
     val readFile: (PartitionedFile) => Iterator[InternalRow] =
       relation.fileFormat.buildReaderWithPartitionValues(
         sparkSession = relation.sparkSession,
@@ -403,7 +405,7 @@ case class FileSourceScanExec(
         partitionSchema = relation.partitionSchema,
         requiredSchema = requiredSchema,
         filters = pushedDownFilters,
-        options = relation.options,
+        options = relation.options + ("rootPath" -> loc.toString()),
         hadoopConf = relation.sparkSession.sessionState.newHadoopConfWithOptions(relation.options))
 
     val readRDD = if (bucketedScan) {

@@ -33,6 +33,7 @@ import org.apache.parquet.filter2.predicate.FilterApi
 import org.apache.parquet.format.converter.ParquetMetadataConverter.SKIP_ROW_GROUPS
 import org.apache.parquet.hadoop._
 import org.apache.parquet.hadoop.ParquetOutputFormat.JobSummaryLevel
+import org.apache.parquet.hadoop.metadata.FileMetaData
 import org.apache.parquet.hadoop.codec.CodecConfig
 import org.apache.parquet.hadoop.util.ContextUtil
 
@@ -51,6 +52,10 @@ import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types._
 import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
 
+//class LRUCache[K, V]
+object SummaryLRU {
+   var summary : List[Footer] = List()
+}
 class ParquetFileFormat
   extends FileFormat
   with DataSourceRegister
@@ -230,6 +235,9 @@ class ParquetFileFormat
     val broadcastedHadoopConf =
       sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
 
+    val path = options.get("rootPath").getOrElse("")
+    hadoopConf.set("rootPath", path)
+
     // TODO: if you move this into the closure it reverts to the default values.
     // If true, enable using the custom RecordReader for parquet. This only works for
     // a subset of the types (no complex types).
@@ -251,7 +259,11 @@ class ParquetFileFormat
     val pushDownStringStartWith = sqlConf.parquetFilterPushDownStringStartWith
     val pushDownInFilterThreshold = sqlConf.parquetFilterPushDownInFilterThreshold
     val isCaseSensitive = sqlConf.caseSensitiveAnalysis
-
+    val sdpUseSummary = sqlConf.isSDPParquetUseSummary
+    if (sdpUseSummary)
+    {
+      hadoopConf.set("sdpPath", path)
+    }
     (file: PartitionedFile) => {
       assert(file.partitionValues.numFields == partitionSchema.size)
 
@@ -267,9 +279,41 @@ class ParquetFileFormat
 
       val sharedConf = broadcastedHadoopConf.value.value
 
-      lazy val footerFileMetaData =
-        ParquetFileReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS).getFileMetaData
-      // Try to push down filters when filter push-down is enabled.
+      lazy val footerFileMetaData : FileMetaData = {
+
+        if (sdpUseSummary) {
+            try {
+              var footOption = SummaryFile.summary.stream()
+                 .filter(_.getFile().equals(filePath))
+                 .findFirst()
+                 .orElse(null)
+              if (footOption != null) {
+                 footOption.getParquetMetadata().getFileMetaData()
+              } else {
+              ParquetFileReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS).getFileMetaData() 
+              }
+            }  catch { case e: Throwable =>
+                val rootPath = new Path(new URI(path))
+
+                val fs = rootPath.getFileSystem(sharedConf)
+                val metadataFile = fs.getFileStatus(new Path(rootPath, ParquetFileWriter.PARQUET_METADATA_FILE))
+                SummaryFile.summary = ParquetFileReader.readSummaryFile(sharedConf, metadataFile)
+                val footOption = SummaryFile.summary.stream()
+                              .filter(_.getFile().equals(filePath))
+                              .findFirst()
+                              .orElse(null)
+
+                if (footOption != null) {
+                   footOption.getParquetMetadata().getFileMetaData()
+                } else {
+                ParquetFileReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS).getFileMetaData() 
+                }
+            }
+        } else {
+           ParquetFileReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS).getFileMetaData()
+        }
+      }
+
       val pushed = if (enableParquetFilterPushDown) {
         val parquetSchema = footerFileMetaData.getSchema
         val parquetFilters = new ParquetFilters(parquetSchema, pushDownDate, pushDownTimestamp,

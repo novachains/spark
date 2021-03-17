@@ -785,6 +785,12 @@ object SQLConf {
     .intConf
     .createWithDefault(4096)
 
+  val PARQUET_SDP_USE_SUMMARY = buildConf("spark.sql.parquet.sdp.useSummary")
+    .doc("When true, use the summary file to filter out partition file and row groups.")
+    .version("3.0.0")
+    .booleanConf
+    .createWithDefault(false)
+
   val ORC_COMPRESSION = buildConf("spark.sql.orc.compression.codec")
     .doc("Sets the compression codec used when writing ORC files. If either `compression` or " +
       "`orc.compress` is specified in the table-specific options/properties, the precedence " +
@@ -3410,6 +3416,8 @@ class SQLConf extends Serializable with Logging {
   def parquetOutputTimestampType: ParquetOutputTimestampType.Value = {
     ParquetOutputTimestampType.withName(getConf(PARQUET_OUTPUT_TIMESTAMP_TYPE))
   }
+
+  def isSDPParquetUseSummary: Boolean = getConf(PARQUET_SDP_USE_SUMMARY)
 
   def writeLegacyParquetFormat: Boolean = getConf(PARQUET_WRITE_LEGACY_FORMAT)
 

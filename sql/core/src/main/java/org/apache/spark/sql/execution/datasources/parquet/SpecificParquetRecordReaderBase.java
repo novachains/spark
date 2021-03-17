@@ -15,11 +15,12 @@
  * limitations under the License.
  */
 
-
 package org.apache.spark.sql.execution.datasources.parquet;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -31,15 +32,18 @@ import java.util.Map;
 import java.util.Set;
 
 import scala.Option;
-
+import scala.collection.JavaConverters.*;
 import static org.apache.parquet.filter2.compat.RowGroupFilter.filterRowGroups;
 import static org.apache.parquet.format.converter.ParquetMetadataConverter.NO_FILTER;
 import static org.apache.parquet.format.converter.ParquetMetadataConverter.range;
 import static org.apache.parquet.hadoop.ParquetFileReader.readFooter;
 import static org.apache.parquet.hadoop.ParquetInputFormat.getFilter;
+import static org.apache.parquet.hadoop.ParquetFileWriter.PARQUET_METADATA_FILE;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
@@ -53,6 +57,7 @@ import org.apache.parquet.hadoop.BadConfigurationException;
 import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.ParquetInputFormat;
 import org.apache.parquet.hadoop.ParquetInputSplit;
+import org.apache.parquet.hadoop.Footer;
 import org.apache.parquet.hadoop.api.InitContext;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
@@ -98,11 +103,42 @@ public abstract class SpecificParquetRecordReaderBase<T> extends RecordReader<Vo
 
     ParquetMetadata footer;
     List<BlockMetaData> blocks;
+    String path = configuration.get("sdpPath");
 
     // if task.side.metadata is set, rowGroupOffsets is null
     if (rowGroupOffsets == null) {
-      // then we need to apply the predicate push down filter
-      footer = readFooter(configuration, file, range(split.getStart(), split.getEnd()));
+       // then we need to apply the predicate push down filter
+      if (path != null)
+      {
+        try {
+          if (SummaryFile.summary == null)
+          {
+            Path rootPath = new Path(new URI(path));
+
+            FileSystem fs = rootPath.getFileSystem(configuration);
+            FileStatus  metadataFile = fs.getFileStatus(new Path(rootPath, PARQUET_METADATA_FILE));
+            SummaryFile.summary = ParquetFileReader.readSummaryFile(configuration, metadataFile);
+          }
+
+          Footer footOption = SummaryFile.summary.stream()
+              .filter(x -> x.getFile().equals(file))
+              .findFirst()
+              .orElse(null);
+
+          if (footOption != null )
+          {
+            footer = footOption.getParquetMetadata();
+          }
+          else
+          {
+            footer = readFooter(configuration, file, range(split.getStart(), split.getEnd()));
+          }
+        } catch (Exception e) { throw new IOException();}
+      }
+      else
+      {
+        footer = readFooter(configuration, file, range(split.getStart(), split.getEnd()));
+      }
       MessageType fileSchema = footer.getFileMetaData().getSchema();
       FilterCompat.Filter filter = getFilter(configuration);
       blocks = filterRowGroups(filter, footer.getBlocks(), fileSchema);
